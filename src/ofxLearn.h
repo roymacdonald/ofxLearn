@@ -1,7 +1,10 @@
 #pragma once
 
 #include "ofMain.h"
-
+#ifdef TARGET_WIN32
+    #include <Synchapi.h>
+#include <Windows.h>
+#endif
 #include "dlib/svm.h"
 #include "dlib/mlp.h"
 #include "dlib/svm/svm_threaded.h"
@@ -62,7 +65,7 @@ public:
     void addSample(sample_type sample, double label);
     void clearTrainingInstances();
     
-    virtual double predict(vector<double> sample) { }
+	virtual double predict(vector<double> sample) { return 0.0; }
     
 protected:
 
@@ -171,7 +174,7 @@ public:
     }
     
     ~ofxLearnThreaded() {
-        finishedTrainingE.clear();
+        //finishedTrainingE.clear();
         finishedTrainingE.disable();
     }
     
