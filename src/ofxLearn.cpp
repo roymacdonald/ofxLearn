@@ -1,3 +1,7 @@
+
+//https://www.projectrhea.org/rhea/index.php/PCA
+
+
 #include "ofxLearn.h"
 
 
@@ -15,8 +19,7 @@ inline sample_type ofxLearn::vectorToSample(vector<double> sample_) {
 void ofxLearnSupervised::addTrainingInstance(vector<double> sample, double label)
 {
     if (label < 0.0 || label > 1.0) {
-        ofLog(OF_LOG_ERROR, "MLP can only take labels between 0.0 and 1.0");
-        //return;
+        ofLog(OF_LOG_WARNING, "Warning: continuous labels should be between 0.0 and 1.0");
     }
     sample_type samp(sample.size());
     for (int i = 0; i < sample.size(); i++) {
@@ -29,9 +32,9 @@ void ofxLearnSupervised::addTrainingInstance(vector<double> sample, double label
 void ofxLearnSupervised::addSample(sample_type sample, double label)
 {
     if (label < 0.0 || label > 1.0) {
-        ofLog(OF_LOG_ERROR, "MLP can only take labels between 0.0 and 1.0");
-        //return;
+        ofLog(OF_LOG_WARNING, "Warning: continuous labels should be between 0.0 and 1.0");
     }
+    
     samples.push_back(sample);
     labels.push_back(label);
 }
@@ -41,6 +44,7 @@ void ofxLearnSupervised::clearTrainingInstances()
     samples.clear();
     labels.clear();
 }
+
 
 //////////////////////////////////////////////////////////////////////
 ////  Unsupervised
@@ -86,13 +90,13 @@ void ofxLearnMLP::train()
         return;
     }
     
-    ofLog(OF_LOG_VERBOSE, "beginning to train regression function... ");
+    ofLog(OF_LOG_VERBOSE, "beginning to train regression ... ");
     
     vector<int> index;
     for (int i=0; i<samples.size(); i++) {
         index.push_back(i);
     }
-    
+
     mlp_trainer = new mlp_trainer_type(samples[0].size(), hiddenLayers);
     
     int iterations = 0;
@@ -112,16 +116,22 @@ void ofxLearnMLP::train()
         }
         rmse = sqrt(rmse / samples.size());
         
-        ofLog(OF_LOG_VERBOSE, "MLP, "+ofToString(hiddenLayers)+" layers, iteration "+ofToString(iterations)+", rmse "+ofToString(rmse));
+        ofLog(OF_LOG_NOTICE, "MLP, "+ofToString(hiddenLayers)+" layers, iteration "+ofToString(iterations)+", rmse "+ofToString(rmse));
         if (rmse <= targetRmse || iterations * samples.size() >= maxSamples) {
             stoppingCriteria = true;
         }
     }
 }
 
-double ofxLearnMLP::predict(vector<double> sample)
+double ofxLearnMLP::predict(vector<double> & sample)
 {
     return (*mlp_trainer)(vectorToSample(sample));
+}
+
+double ofxLearnMLP::predict(sample_type & sample)
+{
+    double theValue = (*mlp_trainer)(sample);
+    return theValue;
 }
 
 
@@ -138,15 +148,58 @@ ofxLearnSVR::~ofxLearnSVR()
     
 }
 
-double ofxLearnSVR::predict(vector<double> sample)
+double ofxLearnSVR::predict(vector<double> & sample)
 {
     return df(vectorToSample(sample));
+}
+
+double ofxLearnSVR::predict(sample_type & sample)
+{
+    return df(sample);
 }
 
 void ofxLearnSVR::train()
 {
     trainer.set_kernel(rbf_kernel_type(0.1));
     trainer.set_c(10);
+    trainer.set_epsilon_insensitivity(0.001);
+    df = trainer.train(samples, labels);
+}
+
+void ofxLearnSVR::trainWithGridParameterSearch()
+{
+    ofLog(OF_LOG_NOTICE, "SVR cross validation is broken for now, just reverting to default train()... sorry!");
+    train();
+    return;
+    
+    // why is this not working right???  overfitting?
+    // just use train() for now.....
+    ofLog(OF_LOG_NOTICE, "Optimizing SVR via cross validation. this may take a while... ");
+    
+    randomize_samples(samples, labels);
+    
+    float best_gamma, best_c;
+    float best_accuracy = 0;
+    for (double gamma = 0.01; gamma <= 1.0; gamma *= 10) {
+        for (double c = 0.01; c <= 100.0; c *= 10){
+            trainer.set_kernel(rbf_kernel_type(gamma));
+            trainer.set_c(c);
+            trainer.set_epsilon_insensitivity(0.001);
+            const dlib::matrix<double> confusion_matrix = dlib::cross_validate_regression_trainer(trainer, samples, labels, 10);
+            double accuracy = sum(diag(confusion_matrix)) / sum(confusion_matrix);
+            ofLog(OF_LOG_NOTICE, "SVR accuracy (gamma = "+ofToString(gamma)+", C = "+ofToString(c)+" : accuracy = "+ofToString(accuracy));
+            if (accuracy > best_accuracy) {
+                best_accuracy = accuracy;
+                best_gamma = gamma;
+                best_c = c;
+            }
+        }
+    }
+    ofLog(OF_LOG_NOTICE, "Finished SVR grid parameter search with top accuracy : "+ofToString(best_accuracy)+", gamma = "+ofToString(best_gamma)+", C = "+ofToString(best_c));
+    
+    // finally, set best parameters and retrain
+    trainer.set_kernel(rbf_kernel_type(best_gamma));
+    trainer.set_c(best_c);
     trainer.set_epsilon_insensitivity(0.001);
     df = trainer.train(samples, labels);
 }
@@ -165,20 +218,57 @@ ofxLearnSVM::~ofxLearnSVM() {
     
 }
 
+void ofxLearnSVM::trainWithGridParameterSearch()
+{
+    ofLog(OF_LOG_NOTICE, "Optimizing SVM via cross validation. this may take a while... ");
+
+    randomize_samples(samples, labels);
+    
+    float best_gamma, best_lambda;
+    float best_accuracy = 0;
+    for (double gamma = 0.01; gamma <= 1.0; gamma *= 10) {
+        for (double lambda = 0.001; lambda <= 1.0; lambda *= 10){
+            rbf_trainer.set_kernel(rbf_kernel_type(gamma));
+            rbf_trainer.set_lambda(lambda);
+            trainer.set_trainer(rbf_trainer);
+            const dlib::matrix<double> confusion_matrix = dlib::cross_validate_multiclass_trainer(trainer, samples, labels, 10);
+            double accuracy = sum(diag(confusion_matrix)) / sum(confusion_matrix);
+            ofLog(OF_LOG_NOTICE, "SVM accuracy (gamma = "+ofToString(gamma)+", lambda = "+ofToString(lambda)+" : accuracy = "+ofToString(accuracy));
+            if (accuracy > best_accuracy) {
+                best_accuracy = accuracy;
+                best_gamma = gamma;
+                best_lambda = lambda;
+            }
+        }
+    }
+    ofLog(OF_LOG_NOTICE, "Finished SVM grid parameter search with top accuracy : "+ofToString(best_accuracy)+", gamma = "+ofToString(best_gamma)+", lambda = "+ofToString(best_lambda));
+
+    // finally, set best parameters and retrain
+    rbf_trainer.set_kernel(rbf_kernel_type(best_gamma));
+    rbf_trainer.set_lambda(best_lambda);
+    trainer.set_trainer(rbf_trainer);
+    df = trainer.train(samples, labels);
+}
+
 void ofxLearnSVM::train()
 {
-    poly_trainer.set_kernel(poly_kernel_type(0.1, 1, 2));
     rbf_trainer.set_kernel(rbf_kernel_type(0.1));
-
+    rbf_trainer.set_lambda(0.01);
     trainer.set_trainer(rbf_trainer);
+
+    //poly_trainer.set_kernel(poly_kernel_type(0.1, 1, 2));
     //trainer.set_trainer(poly_trainer, 1, 2);
     
     randomize_samples(samples, labels);
     df = trainer.train(samples, labels);
 }
 
-double ofxLearnSVM::predict(vector<double> sample) {
+double ofxLearnSVM::predict(vector<double> & sample) {
     return df(vectorToSample(sample));
+}
+
+double ofxLearnSVM::predict(sample_type & sample) {
+    return df(sample);
 }
 
 
@@ -211,12 +301,56 @@ void ofxLearnKMeans::train()
 }
 
 
-/*
- // some notes...
+//////////////////////////////////////////////////////////////////////
+////  Threaded learners
+
+ofxLearnThreaded::ofxLearnThreaded() : ofxLearn() {
+    trained = false;
+}
+
+ofxLearnThreaded::~ofxLearnThreaded() {
+    finishedTrainingE.clear();
+    finishedTrainingE.disable();
+}
+
+void ofxLearnThreaded::beginTraining()
+{
+    trained = false;
+    startThread();
+}
+
+void ofxLearnThreaded::threadedFunction()
+{
+    while (isThreadRunning())
+    {
+        if (lock())
+        {
+            threadedTrainer();
+            trained = true;
+            sleep(1000);
+            unlock();
+            stopThread();
+            ofNotifyEvent(finishedTrainingE);
+        }
+        else
+        {
+            ofLogWarning("threadedFunction()") << "Unable to lock mutex.";
+        }
+    }
+}
+
+
+
+
+
+
+// some notes...
 void ofxLearn::svd()
 {
     // matrix expressions: http://dlib.net/matrix_ex.cpp.html
     
+    
+    // verifying....
     
     sample_type m;
     sample_type a;
@@ -309,5 +443,54 @@ void ofxLearn::svd()
     cout << ms << endl;
     cout << mv << endl;
     cout << md << endl;
+
+    
+    /////////////////////
+    dlib::running_stats<double> rs;
+    
+    double tp1 = 0;
+    double tp2 = 0;
+    
+    // We first generate the data and add it sequentially to our running_stats object.  We
+    // then print every fifth data point.
+    for (int x = 1; x <= 100; x++)
+    {
+        tp1 = x/100.0;
+        tp2 = pi*x == 0 ? 1 : sin(pi * x) / (pi * x);
+        
+        rs.add(tp2);
+    }
+    
+    // Finally, we compute and print the mean, variance, skewness, and excess kurtosis of
+    // our data.
+    
+    cout << endl;
+    cout << "Mean:           " << rs.mean() << endl;
+    cout << "Variance:       " << rs.variance() << endl;
+//    cout << "Skewness:       " << rs.skewness() << endl;
+//    cout << "Excess Kurtosis " << rs.ex_kurtosis() << endl;
+  
+    
+    dlib::vector_normalizer_pca<sample_type> pca1;
+    
+    vector<sample_type> vects;
+    
+    for (int i=0; i<850; i++) {
+        sample_type m2(5);
+        m2(0) = ofRandom(1);
+        m2(1) = m2(0) * (0.35 + ofRandom(-0.05, 0.05));
+        m2(2) = m2(0) * (0.35 + ofRandom(-0.15, 0.15)) + m2(1) * (0.45 + ofRandom(-0.11, 0.19));
+        m2(3) = m2(1) * (0.15 + ofRandom(-0.03, 0.03)) + m2(2) * (0.12 + ofRandom(-0.1, 0.1)) + m2(0) * (0.05 + ofRandom(-0.04, 0.04));
+        m2(4) = ofRandom(1);
+        vects.push_back(m2);
+    }
+
+
+    pca1.train(vects);
+
+    dlib::matrix<double> pca = pca1.pca_matrix();
+    
+    cout << "pca is " << endl;
+    cout << pca << endl;
 }
-*/
+

@@ -10,6 +10,9 @@
 #include "dlib/svm/svm_threaded.h"
 #include "dlib/matrix/matrix_abstract.h"
 
+#include "dlib/statistics/statistics.h"
+
+
 
 // dlib examples
 // http://dlib.net/mlp_ex.cpp.html
@@ -21,11 +24,10 @@
 //  x mlp
 //  x svr
 //  x multiclass svm
-//  - cross validation
-//  - grid parameter search
+//  x cross validation
+//  x grid parameter search
 //  - pca, svd
 //  - sample from gaussian (http://dlib.net/3d_point_cloud_ex.cpp.html)
-//  -
 
 
 
@@ -47,9 +49,12 @@ class ofxLearn
 public:
     ofxLearn() { }
     virtual ~ofxLearn() { }
-    //void svd();
+    void svd();
     
     virtual void train() { }
+    
+    virtual void saveModel(string path) { }
+    virtual void loadModel(string path) { }
     
     inline sample_type vectorToSample(vector<double> sample_);
 };
@@ -65,7 +70,12 @@ public:
     void addSample(sample_type sample, double label);
     void clearTrainingInstances();
     
+<<<<<<< HEAD
 	virtual double predict(vector<double> sample) { return 0.0; }
+=======
+    virtual double predict(vector<double> & sample) { }
+    virtual double predict(sample_type & sample) { }
+>>>>>>> a483d636bb83e5114542dc2adcd0573a93987b88
     
 protected:
 
@@ -97,8 +107,19 @@ public:
     ~ofxLearnMLP();
     
     void train();
-    double predict(vector<double> sample);
+    double predict(vector<double> & sample);
+    double predict(sample_type & sample);
+    
+    void setHiddenLayers(int hiddenLayers) {this->hiddenLayers = hiddenLayers;}
+    void setTargetRmse(float targetRmse) {this->targetRmse = targetRmse;}
+    void setMaxSamples(int maxSamples) {this->maxSamples = maxSamples;}
 
+    int getHiddenLayers() {return hiddenLayers;}
+    float getTargetRmse() {return targetRmse;}
+    int getMaxSamples() {return maxSamples;}
+
+    mlp_trainer_type * getTrainer() {return mlp_trainer;}
+    
 private:
     
     mlp_trainer_type *mlp_trainer;
@@ -117,8 +138,10 @@ public:
     ~ofxLearnSVR();
     
     void train();
-    double predict(vector<double> sample);
-
+    void trainWithGridParameterSearch();
+    double predict(vector<double> & sample);
+    double predict(sample_type & sample);
+    
 private:
     
     dlib::svr_trainer<rbf_kernel_type> trainer;
@@ -133,14 +156,35 @@ public:
     ~ofxLearnSVM();
     
     void train();
-    double predict(vector<double> sample);
+    void trainWithGridParameterSearch();
+    
+    double predict(vector<double> & sample);
+    double predict(sample_type & sample);
+    
+    void saveModel(string path)
+    {
+        const char *filepath = path.c_str();
+        ofstream fout(filepath, ios::binary);
+        dlib::one_vs_one_decision_function<ovo_trainer, dlib::decision_function<rbf_kernel_type> > df2, df3;
+        df2 = df;
+        serialize(df2, fout);
+
+    }
+    
+    void loadModel(string path) {
+        const char *filepath = path.c_str();
+        ifstream fin(filepath, ios::binary);
+        dlib::one_vs_one_decision_function<ovo_trainer, dlib::decision_function<rbf_kernel_type> > df2;
+        dlib::deserialize(df2, fin);
+        df = df2;
+    }
 
 private:
     
     ovo_trainer trainer;
     
+    //dlib::svm_nu_trainer<poly_kernel_type> poly_trainer;
     dlib::krr_trainer<rbf_kernel_type> rbf_trainer;
-    dlib::svm_nu_trainer<poly_kernel_type> poly_trainer;
     dlib::one_vs_one_decision_function<ovo_trainer> df;
 };
 
@@ -185,41 +229,25 @@ public:
     }
     
     template <typename L, typename M>
-    void beginTraining(L *listener, M method)
-    {
-        ofAddListener(finishedTrainingE, listener, method);
-        beginTraining();
-    }
+    void beginTraining(L *listener, M method);
     
     bool isTrained() {return trained;}
     
 private:
     
-    void threadedFunction()
-    {
-        while (isThreadRunning())
-        {
-            if (lock())
-            {
-                threadedTrainer();
-                trained = true;
-                ofNotifyEvent(finishedTrainingE);
-                unlock();
-                stopThread();
-            }
-            else
-            {
-                ofLogWarning("threadedFunction()") << "Unable to lock mutex.";
-            }
-        }
-    }
-    
+    void threadedFunction();
     virtual void threadedTrainer() {};
     
     bool trained;
-    
     ofEvent<void> finishedTrainingE;
 };
+
+template <typename L, typename M>
+void ofxLearnThreaded::beginTraining(L *listener, M method)
+{
+    ofAddListener(finishedTrainingE, listener, method);
+    beginTraining();
+}
 
 class ofxLearnMLPThreaded : public ofxLearnMLP, public ofxLearnThreaded {
     void threadedTrainer() {ofxLearnMLP::train();}
